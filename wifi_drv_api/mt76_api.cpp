@@ -23,7 +23,7 @@ extern "C"
 
 #define MTK_NL80211_VENDOR_ID 0x0ce7
 #define CSI_DUMP_PER_NUM 3
-#define CSI_MAX_COUNT 256
+#define CSI_MAX_COUNT CSI_BW320_DATA_COUNT
 
 static struct unl unl;
 enum mtk_nl80211_vendor_subcmds
@@ -171,6 +171,8 @@ public:
               tb_data[MTK_VENDOR_ATTR_CSI_DATA_I] &&
               tb_data[MTK_VENDOR_ATTR_CSI_DATA_Q] &&
               tb_data[MTK_VENDOR_ATTR_CSI_DATA_INFO] &&
+              tb_data[MTK_VENDOR_ATTR_CSI_DATA_TX_ANT] &&
+              tb_data[MTK_VENDOR_ATTR_CSI_DATA_RX_ANT] &&
               tb_data[MTK_VENDOR_ATTR_CSI_DATA_MODE] &&
               tb_data[MTK_VENDOR_ATTR_CSI_DATA_H_IDX]))
         {
@@ -185,11 +187,12 @@ public:
         c->rssi = nla_get_u8(tb_data[MTK_VENDOR_ATTR_CSI_DATA_RSSI]);
         c->snr = nla_get_u8(tb_data[MTK_VENDOR_ATTR_CSI_DATA_SNR]);
         c->data_bw = nla_get_u8(tb_data[MTK_VENDOR_ATTR_CSI_DATA_BW]);
+        c->ch_bw = c->data_bw;
         c->pri_ch_idx = nla_get_u8(tb_data[MTK_VENDOR_ATTR_CSI_DATA_CH_IDX]);
         c->rx_mode = nla_get_u8(tb_data[MTK_VENDOR_ATTR_CSI_DATA_MODE]);
 
-        c->tx_idx = nla_get_u16(tb_data[MTK_VENDOR_ATTR_CSI_DATA_TX_ANT]);
-        c->rx_idx = nla_get_u16(tb_data[MTK_VENDOR_ATTR_CSI_DATA_RX_ANT]);
+        c->tx_idx = nla_get_u8(tb_data[MTK_VENDOR_ATTR_CSI_DATA_TX_ANT]);
+        c->rx_idx = nla_get_u8(tb_data[MTK_VENDOR_ATTR_CSI_DATA_RX_ANT]);
 
         c->ext_info = nla_get_u32(tb_data[MTK_VENDOR_ATTR_CSI_DATA_INFO]);
         c->h_idx = nla_get_u32(tb_data[MTK_VENDOR_ATTR_CSI_DATA_H_IDX]);
@@ -209,6 +212,7 @@ public:
             if (idx < CSI_MAX_COUNT)
                 c->data_i[idx++] = nla_get_u16(cur);
         }
+        size_t i_count = idx;
 
         idx = 0;
         nla_for_each_nested(cur, tb_data[MTK_VENDOR_ATTR_CSI_DATA_Q], rem)
@@ -216,6 +220,7 @@ public:
             if (idx < CSI_MAX_COUNT)
                 c->data_q[idx++] = nla_get_u16(cur);
         }
+        c->data_num = (u16)(idx < i_count ? idx : i_count);
 
         csi_list.push_back(c);
 
@@ -245,37 +250,52 @@ public:
             csi_list.clear();
         }
 
+        if (unl_genl_init(&unl, "nl80211") < 0)
+        {
+            fprintf(stderr, "Failed to connect to nl80211\n");
+            return NULL;
+        }
+
         for (i = 0; i < pkt_num / CSI_DUMP_PER_NUM; i++)
         {
-            if (unl_genl_init(&unl, "nl80211") < 0)
-            {
-                fprintf(stderr, "Failed to connect to nl80211\n");
-                return NULL;
-            }
-
             msg = unl_genl_msg(&unl, NL80211_CMD_VENDOR, true);
+            if (!msg)
+                break;
 
             if (nla_put_u32(msg, NL80211_ATTR_IFINDEX, if_idx) ||
                 nla_put_u32(msg, NL80211_ATTR_VENDOR_ID, MTK_NL80211_VENDOR_ID) ||
                 nla_put_u32(msg, NL80211_ATTR_VENDOR_SUBCMD, MTK_NL80211_VENDOR_SUBCMD_CSI_CTRL))
-                return NULL;
+            {
+                nlmsg_free(msg);
+                break;
+            }
 
             data = nla_nest_start(msg, NL80211_ATTR_VENDOR_DATA | NLA_F_NESTED);
             if (!data)
-                return NULL;
+            {
+                nlmsg_free(msg);
+                break;
+            }
 
             if (nla_put_u16(msg, MTK_VENDOR_ATTR_CSI_CTRL_DUMP_NUM, CSI_DUMP_PER_NUM))
-                return NULL;
+            {
+                nlmsg_free(msg);
+                break;
+            }
 
             //nla_put_u8(msg, MTK_VENDOR_ATTR_CSI_CTRL_BAND_IDX, band);
 
             nla_nest_end(msg, data);
 
-            if (unl_genl_request(&unl, msg, md_csi_dump_cb, NULL))
+            ret = unl_genl_request(&unl, msg, md_csi_dump_cb, NULL);
+            if (ret)
+            {
                 fprintf(stderr, "nl80211 call failed: %s\n", strerror(-ret));
-
-            unl_free(&unl);
+                break;
+            }
         }
+
+        unl_free(&unl);
 
         return &csi_list;
     }
@@ -316,14 +336,28 @@ public:
 
         msg = unl_genl_msg(&unl, NL80211_CMD_VENDOR, false);
 
+        if (!msg)
+        {
+            unl_free(&unl);
+            return -ENOMEM;
+        }
+
         if (nla_put_u32(msg, NL80211_ATTR_IFINDEX, idx) ||
             nla_put_u32(msg, NL80211_ATTR_VENDOR_ID, MTK_NL80211_VENDOR_ID) ||
             nla_put_u32(msg, NL80211_ATTR_VENDOR_SUBCMD, MTK_NL80211_VENDOR_SUBCMD_CSI_CTRL))
-            return false;
+        {
+            nlmsg_free(msg);
+            unl_free(&unl);
+            return -ENOMEM;
+        }
 
         data = nla_nest_start(msg, NL80211_ATTR_VENDOR_DATA | NLA_F_NESTED);
         if (!data)
+        {
+            nlmsg_free(msg);
+            unl_free(&unl);
             return -ENOMEM;
+        }
 
         md_csi_set_attr(band, msg, mode, type, v1, v2);
 

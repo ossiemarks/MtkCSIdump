@@ -4,21 +4,20 @@
 
 #include <vector>
 
-#define CSI_MAX_COUNT 256
-
-//TODO rewrite, there is no "data_num"
 std::vector<std::vector<double>> ParserMT76::processRawData(void *data, int antIdx)
 {
-    std::vector<std::vector<std::complex<double>>> csi_per_antenna(ANTENNA_NUM, std::vector<std::complex<double>>(CSI_BW160_DATA_COUNT));
     std::vector<csi_data *> *list = (std::vector<csi_data *>*)data;
     std::vector<std::vector<double>> tones_per_packet[ANTENNA_NUM];
 
-    for (int it = 0; it < list->size(); it++)
+    if (antIdx < 0 || antIdx >= ANTENNA_NUM)
+        return {};
+
+    for (size_t it = 0; it < list->size(); it++)
     {
         int num_subcarriers = CSI_BW20_DATA_COUNT; // Default value
         
         csi_data *csi = list->at(it);
-        if (csi)
+        if (csi && csi->rx_idx < ANTENNA_NUM)
         {
             //fprintf(stderr, "\tprocessRawData() csi->data_num: %d\n", csi->data_num);
             
@@ -28,20 +27,15 @@ std::vector<std::vector<double>> ParserMT76::processRawData(void *data, int antI
                 case 1: num_subcarriers = CSI_BW40_DATA_COUNT; break;   // 40MHz
                 case 2: num_subcarriers = CSI_BW80_DATA_COUNT; break;   // 80MHz
                 case 3: num_subcarriers = CSI_BW160_DATA_COUNT; break;  // 160MHz
+                case 4: num_subcarriers = CSI_BW320_DATA_COUNT; break;  // 320MHz
                 default: num_subcarriers = CSI_BW20_DATA_COUNT; break;  // Default to 20MHz
             }
-            
-            //fprintf(stderr, "\tprocessRawData() ch_bw: %d, num_subcarriers: %d\n", csi->ch_bw, num_subcarriers);
-            
-            // Process all subcarriers for this bandwidth
-            for (size_t i = 0; i < num_subcarriers; i++)
-            {
-                std::complex<double> csi_complex(csi->data_i[i], csi->data_q[i]);
-                csi_per_antenna[csi->rx_idx][i] = csi_complex;
-                //fprintf(stderr, "\tprocessRawData() csi_data[%d]->i: 0x%x, csi_data[%d]->q: 0x%x\n", i, csi->data_i[i], i, csi->data_q[i]);
-            }
 
-            if (csi->rx_idx == antIdx)
+            // Never read past what the driver actually delivered
+            if (csi->data_num > 0 && csi->data_num < num_subcarriers)
+                num_subcarriers = csi->data_num;
+
+            if (csi->rx_idx == antIdx && num_subcarriers > 2)
             {
                 // Skip first few subcarriers to avoid DC offset issues
                 int start_idx = (num_subcarriers >= 64) ? 2 : 1;

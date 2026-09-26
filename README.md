@@ -56,6 +56,43 @@ install with `opkg install <dependency>`
 ### Copy CSIdump binary to OpenWRT
 - see releases for `CSIDump` binary
 
+## Building and flashing for OpenWrt One
+
+Stock OpenWrt mt76 does not implement the MediaTek CSI vendor command, so
+`CSIdump` refuses to start on an unmodified image. The upstream v0.1 release
+ships a full OpenWrt One image (24.10.1, kernel 6.6.86) with a CSI-capable
+mt76, but without three of the four MT7981 firmware blobs, so wifi does not
+come up until they are copied in. The prebuilt `.ko` files from that release do
+**not** load on the release 24.10.1 kernel (struct module size mismatch), so an
+ImageBuilder image with those modules overlaid has no wifi at all. The working
+procedure is therefore: flash the upstream image, then deploy the blobs and this
+package on top.
+
+Scripts live in `openwrt/`. `build.sh` needs Linux x86_64 and about 6 GB of
+disk; on macOS run it in a container with a named volume for the work tree:
+
+```bash
+docker run --rm -it --platform linux/amd64 -v "$PWD:/work" -w /work \
+    -v csidump-build:/build -e CSIDUMP_WORK=/build ubuntu:24.04 bash openwrt/build.sh
+```
+
+That produces `openwrt/out/csidump_*.ipk` and copies `libnl-tiny1`,
+`libstdcpp6` and the firmware blobs into `openwrt/out/deps/`. Then, over
+Ethernet (router at 192.168.77.1 by default, `ROUTER=...` overrides):
+
+```bash
+sudo bash openwrt/net-setup.sh apply          # macOS only: keep Wi-Fi as the internet route
+ROUTER_PASSWORD='...' bash openwrt/flash.sh --check
+IMAGE=openwrt/out/upstream-v0.1-openwrt_one-squashfs-sysupgrade.itb \
+    ROUTER_PASSWORD='...' bash openwrt/flash.sh   # flash upstream image, keep settings
+ROUTER_PASSWORD='...' bash openwrt/deploy.sh      # blobs + csidump + libs, rebind wifi
+```
+
+`flash.sh` refuses anything that is not an OpenWrt One, verifies the image
+checksum on the router and runs `sysupgrade --test` first. `--reset` wipes
+settings, after which the router returns on 192.168.1.1. Reboot once after
+`deploy.sh` so the radios are numbered phy0/phy1.
+
 ## Dependencies Python UI
 
 - Python 3.6+

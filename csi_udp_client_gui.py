@@ -472,9 +472,8 @@ class CSIVisualizerWindow(QtWidgets.QMainWindow):
         
         # Convert to numpy array for display
         if len(self.waterfall_data[antenna_idx]) > 1:
-            waterfall_array = np.array(self.waterfall_data[antenna_idx])
-            
-            # Ensure consistent array shape by padding shorter arrays with zeros
+            # Rows can differ in length (20 MHz vs 40 MHz frames), so pad before
+            # building the array; numpy 2 rejects ragged input outright.
             max_length = max(len(row) for row in self.waterfall_data[antenna_idx])
             padded_data = []
             for row in self.waterfall_data[antenna_idx]:

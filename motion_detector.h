@@ -64,12 +64,12 @@ private:
     MT76API wifi;
 
     double motion_result;
-    bool isMonitoring;
+    std::atomic<bool> isMonitoring;
     std::thread monitorWorker;
     std::thread udpServerWorker;
     std::mutex dataMutex;
     std::mutex udpMutex;
     std::vector<std::pair<std::string, int>> udpClients;
     int udpSocket;
-    bool udpServerRunning;
+    std::atomic<bool> udpServerRunning;
 };

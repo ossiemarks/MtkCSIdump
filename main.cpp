@@ -10,12 +10,10 @@
 #include "motion_detector.h"
 
 MotionDetector& md = MotionDetector::getInstance();
-int stop = 0;
+static volatile sig_atomic_t stop = 0;
 
 void signalHandler(int)
 {
-    md.stopMonitoring();
-    md.stopUdpServer();
     stop = 1;
 }
 
@@ -41,13 +39,18 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    md.startMonitoring(argv[1], std::stoul(argv[2]));
+    if (md.startMonitoring(argv[1], std::stoul(argv[2])) != 0) {
+        std::cerr << "Failed to start CSI capture on " << argv[1]
+                  << " (does the mt76 driver expose the MediaTek CSI vendor command?)" << std::endl;
+        md.stopUdpServer();
+        return 1;
+    }
 
     while (!stop)
-    {
-        std::cout << "Main Function Executing..." << std::endl;
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    md.stopMonitoring();
+    md.stopUdpServer();
 
     return 0;
 }
